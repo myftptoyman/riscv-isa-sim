@@ -81,6 +81,8 @@ riscv_srcs = \
 	socketif.cc \
 	cfg.cc \
 	aplic.cc \
+	virtio.cc \
+	virtio_fifo.cc \
 	$(riscv_gen_srcs) \
 
 riscv_test_srcs = \
