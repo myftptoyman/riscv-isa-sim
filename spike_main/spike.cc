@@ -8,6 +8,7 @@
 #include "remote_bitbang.h"
 #include "cachesim.h"
 #include "extension.h"
+#include "virtio_fifo.h"
 #include <dlfcn.h>
 #include <fesvr/option_parser.h>
 #include <stdexcept>
@@ -86,6 +87,7 @@ static void help(int exit_code = 1)
   fprintf(stderr, "  --dm-no-abstractauto  Debug module won't support the abstractauto register\n");
   fprintf(stderr, "  --blocksz=<size>      Cache block size (B) for CMO operations(powers of 2) [default 64]\n");
   fprintf(stderr, "  --instructions=<n>    Stop after n instructions\n");
+  fprintf(stderr, "  --virtio-fifo=<path>  Enable virtio FIFO device with Unix socket at <path>\n");
 
   exit(exit_code);
 }
@@ -459,6 +461,9 @@ int main(int argc, char** argv)
   });
   parser.option(0, "instructions", 1, [&](const char* s){
     instructions = strtoull(s, 0, 0);
+  });
+  parser.option(0, "virtio-fifo", 1, [&](const char* s){
+    set_virtio_fifo_socket_path(s);
   });
 
   auto argv1 = parser.parse(argv);

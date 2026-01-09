@@ -32,4 +32,6 @@ int fdt_parse_pmp_alignment(const void *fdt, int cpu_offset, reg_t *pmp_align);
 int fdt_parse_mmu_type(const void *fdt, int cpu_offset, const char **mmu_type);
 int fdt_parse_isa(const void *fdt, int cpu_offset, const char **isa_str);
 int fdt_parse_hartid(const void *fdt, int cpu_offset, uint32_t *hartid);
+int fdt_parse_virtio_fifo(const void *fdt, reg_t *addr, uint32_t *int_id,
+                          const char *compatible);
 #endif
