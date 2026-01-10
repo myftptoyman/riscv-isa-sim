@@ -94,6 +94,9 @@ virtio_block_t::~virtio_block_t() {
 uint64_t virtio_block_t::get_device_features() const {
   uint64_t features = VIRTIO_F_VERSION_1;
 
+  // Support indirect descriptors (allows unlimited scatter-gather)
+  features |= VIRTIO_F_INDIRECT_DESC;
+
   // Advertise supported features
   features |= VIRTIO_BLK_F_SIZE_MAX;
   features |= VIRTIO_BLK_F_SEG_MAX;

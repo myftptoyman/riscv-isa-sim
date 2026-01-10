@@ -42,6 +42,8 @@ extern device_factory_t* ns16550_factory;
 extern device_factory_t* imsic_mmio_factory;
 extern device_factory_t* virtio_fifo_factory;
 extern device_factory_t* virtio_block_factory;
+extern device_factory_t* virtio_net_factory;
+extern device_factory_t* virtio_rng_factory;
 
 sim_t::sim_t(const cfg_t *cfg, bool halted,
              std::vector<std::pair<reg_t, abstract_mem_t*>> mems,
@@ -139,7 +141,9 @@ sim_t::sim_t(const cfg_t *cfg, bool halted,
     {aplic_s_factory, {}},
     {ns16550_factory, {}},
     {virtio_fifo_factory, {}},
-    {virtio_block_factory, {}}};
+    {virtio_block_factory, {}},
+    {virtio_net_factory, {}},
+    {virtio_rng_factory, {}}};
 
   // Load dtb_file if provided, otherwise self-generate a dts/dtb
   if (dtb_file) {

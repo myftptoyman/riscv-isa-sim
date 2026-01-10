@@ -91,6 +91,8 @@ riscv_srcs = \
 	virtio.cc \
 	virtio_fifo.cc \
 	virtio_block.cc \
+	virtio_net.cc \
+	virtio_rng.cc \
 	slirp_net.cc \
 	$(riscv_gen_srcs) \
 

@@ -64,6 +64,8 @@
 #define VRING_DESC_F_INDIRECT           0x04
 
 // Common feature bits
+#define VIRTIO_F_INDIRECT_DESC          (1ULL << 28)
+#define VIRTIO_F_EVENT_IDX              (1ULL << 29)
 #define VIRTIO_F_VERSION_1              (1ULL << 32)
 #define VIRTIO_F_RING_PACKED            (1ULL << 34)
 
@@ -187,6 +189,11 @@ private:
   uint32_t interrupt_status;
   uint32_t status;
   uint32_t config_generation;
+
+  // Temporary storage for 64-bit queue address writes
+  uint32_t desc_addr_lo;
+  uint32_t avail_addr_lo;
+  uint32_t used_addr_lo;
 };
 
 #endif // _RISCV_VIRTIO_H

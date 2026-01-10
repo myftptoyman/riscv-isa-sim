@@ -103,12 +103,48 @@ int virtqueue_t::get_avail_buf(std::vector<vring_desc>& out_descs, std::vector<v
   // Walk descriptor chain
   uint16_t desc_idx = head;
   int chain_count = 0;
-  const int max_chain = 256;  // Prevent infinite loops
+  const int max_chain = 1024;  // Prevent infinite loops
 
   while (chain_count < max_chain) {
     vring_desc desc;
     if (!read_guest_mem(desc_addr + desc_idx * sizeof(vring_desc), &desc, sizeof(desc)))
       return -1;
+
+    // Handle indirect descriptor
+    if (desc.flags & VRING_DESC_F_INDIRECT) {
+      // desc.addr points to a table of indirect descriptors
+      // desc.len is the total size of the indirect table
+      uint64_t indirect_addr = desc.addr;
+      uint32_t indirect_count = desc.len / sizeof(vring_desc);
+
+      // Walk the indirect descriptor table
+      for (uint32_t i = 0; i < indirect_count && chain_count < max_chain; i++) {
+        vring_desc indirect_desc;
+        if (!read_guest_mem(indirect_addr + i * sizeof(vring_desc), &indirect_desc, sizeof(indirect_desc)))
+          return -1;
+
+        // Add to appropriate list based on WRITE flag
+        if (indirect_desc.flags & VRING_DESC_F_WRITE) {
+          in_descs.push_back(indirect_desc);
+        } else {
+          out_descs.push_back(indirect_desc);
+        }
+
+        chain_count++;
+
+        // Check if there's a next descriptor in the indirect table
+        if (!(indirect_desc.flags & VRING_DESC_F_NEXT))
+          break;
+      }
+
+      // After processing indirect, check if there are more descriptors in main chain
+      if (!(desc.flags & VRING_DESC_F_NEXT))
+        break;
+
+      desc_idx = desc.next;
+      chain_count++;
+      continue;
+    }
 
     // Separate device-readable (out) and device-writable (in) descriptors
     if (desc.flags & VRING_DESC_F_WRITE) {
@@ -161,7 +197,8 @@ virtio_base_t::virtio_base_t(simif_t* sim,
   : sim(sim), intctrl(intctrl), interrupt_id(interrupt_id),
     device_features_sel(0), driver_features_lo(0), driver_features_hi(0),
     driver_features_sel(0), queue_sel(0), interrupt_status(0),
-    status(0), config_generation(0)
+    status(0), config_generation(0),
+    desc_addr_lo(0), avail_addr_lo(0), used_addr_lo(0)
 {
   for (uint32_t i = 0; i < num_queues; i++) {
     queues.emplace_back(sim, queue_size);
@@ -172,7 +209,12 @@ virtio_base_t::~virtio_base_t() {
 }
 
 void virtio_base_t::raise_interrupt(uint32_t reason) {
+  static bool debug_virtio = getenv("DEBUG_VIRTIO") != nullptr;
   interrupt_status |= reason;
+  if (debug_virtio) {
+    fprintf(stderr, "virtio: device_id=%d raise_interrupt reason=%u status=%u int_id=%u\n",
+            get_device_id(), reason, interrupt_status, interrupt_id);
+  }
   update_interrupt();
 }
 
@@ -185,8 +227,19 @@ void virtio_base_t::update_interrupt() {
 }
 
 bool virtio_base_t::load(reg_t addr, size_t len, uint8_t* bytes) {
+  static bool debug_virtio = getenv("DEBUG_VIRTIO") != nullptr;
+
+  // Config space can be read with any size (1, 2, or 4 bytes)
+  if (addr >= VIRTIO_MMIO_CONFIG && addr < VIRTIO_MMIO_CONFIG + get_config_size()) {
+    if (debug_virtio) fprintf(stderr, "virtio: device_id=%d config read addr=0x%lx offset=%lu len=%zu\n",
+                              get_device_id(), (unsigned long)addr, (unsigned long)(addr - VIRTIO_MMIO_CONFIG), len);
+    if (!read_config(addr - VIRTIO_MMIO_CONFIG, len, bytes))
+      memset(bytes, 0, len);
+    return true;
+  }
+
   if (len != 4) {
-    // VirtIO MMIO uses 32-bit registers
+    // VirtIO MMIO standard registers use 32-bit access
     memset(bytes, 0, len);
     return true;
   }
@@ -196,14 +249,17 @@ bool virtio_base_t::load(reg_t addr, size_t len, uint8_t* bytes) {
   switch (addr) {
     case VIRTIO_MMIO_MAGIC_VALUE:
       val = VIRTIO_MMIO_MAGIC;
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d magic read\n", get_device_id());
       break;
 
     case VIRTIO_MMIO_VERSION:
       val = VIRTIO_MMIO_VERSION_2;
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d version read -> %d\n", get_device_id(), val);
       break;
 
     case VIRTIO_MMIO_DEVICE_ID:
       val = get_device_id();
+      if (debug_virtio) fprintf(stderr, "virtio: device_id read -> %d\n", val);
       break;
 
     case VIRTIO_MMIO_VENDOR_ID:
@@ -249,11 +305,9 @@ bool virtio_base_t::load(reg_t addr, size_t len, uint8_t* bytes) {
       break;
 
     default:
-      if (addr >= VIRTIO_MMIO_CONFIG && addr < VIRTIO_MMIO_CONFIG + get_config_size()) {
-        if (!read_config(addr - VIRTIO_MMIO_CONFIG, len, bytes))
-          memset(bytes, 0, len);
-        return true;
-      }
+      // Config space is handled at the top of load()
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d unknown read addr=0x%lx\n",
+                                get_device_id(), (unsigned long)addr);
       val = 0;
       break;
   }
@@ -263,6 +317,8 @@ bool virtio_base_t::load(reg_t addr, size_t len, uint8_t* bytes) {
 }
 
 bool virtio_base_t::store(reg_t addr, size_t len, const uint8_t* bytes) {
+  static bool debug_virtio = getenv("DEBUG_VIRTIO") != nullptr;
+
   if (len != 4) {
     return true;  // Ignore non-32-bit writes
   }
@@ -295,21 +351,27 @@ bool virtio_base_t::store(reg_t addr, size_t len, const uint8_t* bytes) {
       break;
 
     case VIRTIO_MMIO_QUEUE_READY:
-      if (queue_sel < queues.size())
+      if (queue_sel < queues.size()) {
+        if (debug_virtio) fprintf(stderr, "virtio: device_id=%d queue[%d] ready=%d this=%p\n", get_device_id(), queue_sel, val, (void*)this);
         queues[queue_sel].set_ready(val != 0);
+      }
       break;
 
     case VIRTIO_MMIO_QUEUE_NOTIFY:
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d QUEUE_NOTIFY val=%d\n", get_device_id(), val);
       if (val < queues.size())
         handle_queue_notify(val);
       break;
 
     case VIRTIO_MMIO_INTERRUPT_ACK:
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d INTERRUPT_ACK val=%u status=%u->%u\n",
+                                get_device_id(), val, interrupt_status, interrupt_status & ~val);
       interrupt_status &= ~val;
       update_interrupt();
       break;
 
     case VIRTIO_MMIO_STATUS:
+      if (debug_virtio) fprintf(stderr, "virtio: device_id=%d status write %02x -> %02x\n", get_device_id(), status, val);
       if (val == 0) {
         // Device reset
         status = 0;
@@ -328,6 +390,7 @@ bool virtio_base_t::store(reg_t addr, size_t len, const uint8_t* bytes) {
         if ((status & VIRTIO_STATUS_FEATURES_OK) && !(status & VIRTIO_STATUS_DRIVER_OK)) {
           // Features negotiation complete
           uint64_t features = ((uint64_t)driver_features_hi << 32) | driver_features_lo;
+          if (debug_virtio) fprintf(stderr, "virtio: device_id=%d features negotiated %016llx\n", get_device_id(), (unsigned long long)features);
           handle_driver_features(features);
         }
       }
@@ -335,36 +398,46 @@ bool virtio_base_t::store(reg_t addr, size_t len, const uint8_t* bytes) {
 
     case VIRTIO_MMIO_QUEUE_DESC_LOW:
       if (queue_sel < queues.size()) {
-        uint64_t addr = queues[queue_sel].get_num();  // Dummy read to preserve high bits
-        (void)addr;
-        // For simplicity, just set low 32 bits
-        queues[queue_sel].set_desc_addr((queues[queue_sel].get_num() ? 0 : 0) | val);
+        // Store low 32 bits - will be combined with high bits when set_desc_addr is called
+        desc_addr_lo = val;
       }
       break;
 
     case VIRTIO_MMIO_QUEUE_DESC_HIGH:
       if (queue_sel < queues.size()) {
-        // Combine with previously set low bits - simplified approach
-        // In reality we'd need to track partial writes
+        // Combine with previously set low bits
+        uint64_t addr = ((uint64_t)val << 32) | desc_addr_lo;
+        queues[queue_sel].set_desc_addr(addr);
+        if (debug_virtio) fprintf(stderr, "virtio: device_id=%d queue[%d] desc_addr=0x%016llx\n", get_device_id(), queue_sel, (unsigned long long)addr);
       }
       break;
 
     case VIRTIO_MMIO_QUEUE_AVAIL_LOW:
-      if (queue_sel < queues.size())
-        queues[queue_sel].set_avail_addr(val);
+      if (queue_sel < queues.size()) {
+        avail_addr_lo = val;
+      }
       break;
 
     case VIRTIO_MMIO_QUEUE_AVAIL_HIGH:
-      // Handle 64-bit address (for rv64)
+      if (queue_sel < queues.size()) {
+        uint64_t addr = ((uint64_t)val << 32) | avail_addr_lo;
+        queues[queue_sel].set_avail_addr(addr);
+        if (debug_virtio) fprintf(stderr, "virtio: device_id=%d queue[%d] avail_addr=0x%016llx\n", get_device_id(), queue_sel, (unsigned long long)addr);
+      }
       break;
 
     case VIRTIO_MMIO_QUEUE_USED_LOW:
-      if (queue_sel < queues.size())
-        queues[queue_sel].set_used_addr(val);
+      if (queue_sel < queues.size()) {
+        used_addr_lo = val;
+      }
       break;
 
     case VIRTIO_MMIO_QUEUE_USED_HIGH:
-      // Handle 64-bit address (for rv64)
+      if (queue_sel < queues.size()) {
+        uint64_t addr = ((uint64_t)val << 32) | used_addr_lo;
+        queues[queue_sel].set_used_addr(addr);
+        if (debug_virtio) fprintf(stderr, "virtio: device_id=%d queue[%d] used_addr=0x%016llx\n", get_device_id(), queue_sel, (unsigned long long)addr);
+      }
       break;
 
     default:
