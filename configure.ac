@@ -84,6 +84,18 @@ AC_CHECK_TYPE([__int128_t],
               AC_DEFINE([HAVE_INT128], [1], [__int128_t is supported])])
 
 #-------------------------------------------------------------------------
+# Check for libslirp (optional, for VirtIO-Net support)
+#-------------------------------------------------------------------------
+
+PKG_CHECK_MODULES([SLIRP], [slirp], [
+  AC_DEFINE([HAVE_SLIRP], [1], [libslirp is available for VirtIO networking])
+  AC_SUBST([HAVE_SLIRP],[yes])
+], [
+  AC_MSG_WARN([libslirp not found, VirtIO-Net support will be disabled])
+  AC_SUBST([HAVE_SLIRP],[no])
+])
+
+#-------------------------------------------------------------------------
 # Default compiler flags
 #-------------------------------------------------------------------------
 

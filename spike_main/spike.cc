@@ -10,6 +10,8 @@
 #include "extension.h"
 #include "virtio_fifo.h"
 #include "virtio_block.h"
+#include "virtio_net.h"
+#include "virtio_rng.h"
 #include <dlfcn.h>
 #include <fesvr/option_parser.h>
 #include <stdexcept>
@@ -96,6 +98,12 @@ static void help(int exit_code = 1)
 #endif
   fprintf(stderr, "  --virtio-block=<path> Enable virtio block device with disk image at <path>\n");
   fprintf(stderr, "  --virtio-block-ro     Make virtio block device read-only\n");
+#ifdef HAVE_SLIRP
+  fprintf(stderr, "  --virtio-net-linux=<ports>  Enable standard VirtIO-Net for Linux\n");
+  fprintf(stderr, "                        Ports format: host:guest[,host2:guest2,...]\n");
+  fprintf(stderr, "                        Example: --virtio-net-linux=2222:22,8080:80\n");
+#endif
+  fprintf(stderr, "  --virtio-rng          Enable VirtIO random number generator\n");
 
   exit(exit_code);
 }
@@ -498,11 +506,43 @@ int main(int argc, char** argv)
   parser.option(0, "virtio-block-ro", 0, [&](const char UNUSED *s){
     set_virtio_block_readonly(true);
   });
+#ifdef HAVE_SLIRP
+  parser.option(0, "virtio-net-linux", 1, [&](const char* s){
+    fprintf(stderr, "spike: parsing --virtio-net-linux option: '%s'\n", s ? s : "(null)");
+    virtio_net_slirp_config_t net_cfg;
+    net_cfg.enabled = true;
+    if (s && *s) {
+      // Parse port forwards: host:guest[,host2:guest2,...]
+      std::string port_str(s);
+      std::stringstream ss(port_str);
+      std::string pair;
+      while (std::getline(ss, pair, ',')) {
+        size_t colon = pair.find(':');
+        if (colon != std::string::npos) {
+          uint16_t host_port = std::stoi(pair.substr(0, colon));
+          uint16_t guest_port = std::stoi(pair.substr(colon + 1));
+          net_cfg.port_forwards.push_back(std::make_pair(host_port, guest_port));
+        }
+      }
+    }
+    if (net_cfg.port_forwards.empty()) {
+      // Default: forward 2222->22 for SSH
+      net_cfg.port_forwards.push_back(std::make_pair(2222, 22));
+    }
+    fprintf(stderr, "spike: setting virtio_net_slirp_config enabled=%d, ports=%zu\n",
+            net_cfg.enabled, net_cfg.port_forwards.size());
+    set_virtio_net_slirp_config(net_cfg);
+  });
+#endif
+  parser.option(0, "virtio-rng", 0, [&](const char UNUSED *s){
+    set_virtio_rng_enabled(true);
+  });
 
   auto argv1 = parser.parse(argv);
   std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);
 
-  if (!*argv1)
+  // Allow kernel-only boot (no target program needed when --kernel is specified)
+  if (!*argv1 && !kernel)
     help();
 
   std::vector<std::pair<reg_t, abstract_mem_t*>> mems =

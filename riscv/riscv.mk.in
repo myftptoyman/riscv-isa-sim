@@ -57,6 +57,8 @@ riscv_install_hdrs = \
 	virtio.h \
 	virtio_fifo.h \
 	virtio_block.h \
+	virtio_net.h \
+	virtio_rng.h \
 
 riscv_precompiled_hdrs = \
 	insn_template.h \
@@ -89,6 +91,8 @@ riscv_srcs = \
 	virtio.cc \
 	virtio_fifo.cc \
 	virtio_block.cc \
+	virtio_net.cc \
+	virtio_rng.cc \
 	slirp_net.cc \
 	$(riscv_gen_srcs) \
 

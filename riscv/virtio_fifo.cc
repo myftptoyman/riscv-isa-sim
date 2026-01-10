@@ -452,6 +452,13 @@ void virtio_fifo_t::process_rx_queue() {
 
 std::string virtio_fifo_generate_dts(const sim_t* sim, const std::vector<std::string>& sargs UNUSED)
 {
+  // Only generate DTS if device is configured (socket path or SLIRP enabled)
+  const std::string& socket_path = get_virtio_fifo_socket_path();
+  const virtio_fifo_slirp_config_t& slirp_config = get_virtio_fifo_slirp_config();
+
+  if (socket_path.empty() && !slirp_config.enabled)
+    return "";  // No device configured, don't add to DTS
+
   std::stringstream s;
   reg_t base = VIRTIO_FIFO_BASE;
   reg_t sz = VIRTIO_FIFO_SIZE;
