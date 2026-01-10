@@ -13,7 +13,12 @@ spike_main_install_prog_srcs = \
 
 spike_main_srcs = \
 
-spike_main_CFLAGS = -fPIC
+SLIRP_CFLAGS := $(shell pkg-config --cflags slirp 2>/dev/null)
+ifneq ($(SLIRP_CFLAGS),)
+  HAVE_SLIRP_FLAG = -DHAVE_SLIRP=1
+endif
+
+spike_main_CFLAGS = -fPIC $(HAVE_SLIRP_FLAG)
 
 # This hack adds all symbols from extension.o to spike's dynamic symbol
 # table, which is required for dynamically loaded --extension libraries

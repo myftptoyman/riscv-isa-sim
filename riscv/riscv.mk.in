@@ -7,7 +7,14 @@ riscv_subproject_deps = \
 	fesvr \
 	softfloat \
 
-riscv_CFLAGS = -fPIC -I$(src_dir)/fdt
+SLIRP_CFLAGS := $(shell pkg-config --cflags slirp 2>/dev/null)
+SLIRP_LIBS := $(shell pkg-config --libs slirp 2>/dev/null)
+ifneq ($(SLIRP_LIBS),)
+  HAVE_SLIRP_FLAG = -DHAVE_SLIRP=1
+endif
+
+riscv_CFLAGS = -fPIC -I$(src_dir)/fdt $(SLIRP_CFLAGS) $(HAVE_SLIRP_FLAG)
+riscv_LDFLAGS = $(SLIRP_LIBS)
 
 riscv_install_shared_lib = yes
 
@@ -80,6 +87,7 @@ riscv_srcs = \
 	cfg.cc \
 	virtio.cc \
 	virtio_fifo.cc \
+	slirp_net.cc \
 	$(riscv_gen_srcs) \
 
 riscv_test_srcs = \

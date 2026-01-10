@@ -2,10 +2,15 @@
 #ifndef _RISCV_VIRTIO_FIFO_H
 #define _RISCV_VIRTIO_FIFO_H
 
+#include "config.h"
 #include "virtio.h"
 #include <string>
 #include <queue>
 #include <vector>
+
+#ifdef HAVE_SLIRP
+#include "slirp_net.h"
+#endif
 
 // VirtIO FIFO device ID (custom device type)
 // Using a value in the vendor-specific range
@@ -25,6 +30,17 @@ struct virtio_fifo_config {
 #define VIRTIO_FIFO_MAX_TX_SIZE 4096
 #define VIRTIO_FIFO_MAX_RX_SIZE 4096
 
+// SLIRP configuration for integrated networking
+struct virtio_fifo_slirp_config_t {
+  bool enabled;
+  uint16_t host_port;
+  uint16_t guest_port;
+  bool debug;
+
+  virtio_fifo_slirp_config_t() :
+    enabled(false), host_port(8080), guest_port(80), debug(false) {}
+};
+
 class virtio_fifo_t : public virtio_base_t {
 public:
   // Queue indices
@@ -32,10 +48,20 @@ public:
   static const uint32_t QUEUE_RX = 1;  // Host to Guest (receive)
   static const uint32_t NUM_QUEUES = 2;
 
+  // Constructor for socket mode
   virtio_fifo_t(simif_t* sim,
                 abstract_interrupt_controller_t* intctrl,
                 uint32_t interrupt_id,
                 const std::string& socket_path);
+
+#ifdef HAVE_SLIRP
+  // Constructor for SLIRP mode
+  virtio_fifo_t(simif_t* sim,
+                abstract_interrupt_controller_t* intctrl,
+                uint32_t interrupt_id,
+                const virtio_fifo_slirp_config_t& slirp_config);
+#endif
+
   virtual ~virtio_fifo_t();
 
   void tick(reg_t rtc_ticks) override;
@@ -79,6 +105,14 @@ private:
   // Tick counter for polling
   uint64_t tick_count;
   static const uint64_t POLL_INTERVAL = 100;  // Poll every N ticks
+
+#ifdef HAVE_SLIRP
+  // SLIRP networking (alternative to socket)
+  bool use_slirp;
+  slirp_net_t* slirp_net;
+  void slirp_rx_callback(const uint8_t* data, size_t len);
+  void init_slirp(const virtio_fifo_slirp_config_t& config);
+#endif
 };
 
 // Factory functions for device registration
@@ -89,5 +123,10 @@ std::string virtio_fifo_generate_dts(const sim_t* sim, const std::vector<std::st
 // Global socket path configuration
 void set_virtio_fifo_socket_path(const std::string& path);
 const std::string& get_virtio_fifo_socket_path();
+
+// Global SLIRP configuration
+void set_virtio_fifo_slirp_config(const virtio_fifo_slirp_config_t& config);
+const virtio_fifo_slirp_config_t& get_virtio_fifo_slirp_config();
+bool is_virtio_fifo_slirp_enabled();
 
 #endif // _RISCV_VIRTIO_FIFO_H

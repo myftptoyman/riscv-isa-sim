@@ -88,6 +88,11 @@ static void help(int exit_code = 1)
   fprintf(stderr, "  --blocksz=<size>      Cache block size (B) for CMO operations(powers of 2) [default 64]\n");
   fprintf(stderr, "  --instructions=<n>    Stop after n instructions\n");
   fprintf(stderr, "  --virtio-fifo=<path>  Enable virtio FIFO device with Unix socket at <path>\n");
+#ifdef HAVE_SLIRP
+  fprintf(stderr, "  --virtio-net=<port>   Enable virtio FIFO with integrated SLIRP networking\n");
+  fprintf(stderr, "                        Port format: host_port or host_port:guest_port\n");
+  fprintf(stderr, "                        Example: --virtio-net=8080 or --virtio-net=8080:80\n");
+#endif
 
   exit(exit_code);
 }
@@ -465,6 +470,25 @@ int main(int argc, char** argv)
   parser.option(0, "virtio-fifo", 1, [&](const char* s){
     set_virtio_fifo_socket_path(s);
   });
+#ifdef HAVE_SLIRP
+  parser.option(0, "virtio-net", 1, [&](const char* s){
+    virtio_fifo_slirp_config_t slirp_cfg;
+    slirp_cfg.enabled = true;
+    slirp_cfg.host_port = 8080;
+    slirp_cfg.guest_port = 80;
+    if (s && *s) {
+      // Parse host_port or host_port:guest_port format
+      char* colon = strchr(const_cast<char*>(s), ':');
+      if (colon) {
+        slirp_cfg.host_port = atoi(s);
+        slirp_cfg.guest_port = atoi(colon + 1);
+      } else {
+        slirp_cfg.host_port = atoi(s);
+      }
+    }
+    set_virtio_fifo_slirp_config(slirp_cfg);
+  });
+#endif
 
   auto argv1 = parser.parse(argv);
   std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);
