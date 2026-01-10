@@ -9,6 +9,7 @@
 #include "cachesim.h"
 #include "extension.h"
 #include "virtio_fifo.h"
+#include "virtio_block.h"
 #include <dlfcn.h>
 #include <fesvr/option_parser.h>
 #include <stdexcept>
@@ -93,6 +94,8 @@ static void help(int exit_code = 1)
   fprintf(stderr, "                        Port format: host_port or host_port:guest_port\n");
   fprintf(stderr, "                        Example: --virtio-net=8080 or --virtio-net=8080:80\n");
 #endif
+  fprintf(stderr, "  --virtio-block=<path> Enable virtio block device with disk image at <path>\n");
+  fprintf(stderr, "  --virtio-block-ro     Make virtio block device read-only\n");
 
   exit(exit_code);
 }
@@ -489,6 +492,12 @@ int main(int argc, char** argv)
     set_virtio_fifo_slirp_config(slirp_cfg);
   });
 #endif
+  parser.option(0, "virtio-block", 1, [&](const char* s){
+    set_virtio_block_image_path(s);
+  });
+  parser.option(0, "virtio-block-ro", 0, [&](const char UNUSED *s){
+    set_virtio_block_readonly(true);
+  });
 
   auto argv1 = parser.parse(argv);
   std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);

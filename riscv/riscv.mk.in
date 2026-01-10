@@ -56,6 +56,7 @@ riscv_install_hdrs = \
 	vector_unit.h \
 	virtio.h \
 	virtio_fifo.h \
+	virtio_block.h \
 
 riscv_precompiled_hdrs = \
 	insn_template.h \
@@ -87,6 +88,7 @@ riscv_srcs = \
 	cfg.cc \
 	virtio.cc \
 	virtio_fifo.cc \
+	virtio_block.cc \
 	slirp_net.cc \
 	$(riscv_gen_srcs) \
 

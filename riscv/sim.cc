@@ -36,6 +36,7 @@ extern device_factory_t* clint_factory;
 extern device_factory_t* plic_factory;
 extern device_factory_t* ns16550_factory;
 extern device_factory_t* virtio_fifo_factory;
+extern device_factory_t* virtio_block_factory;
 
 sim_t::sim_t(const cfg_t *cfg, bool halted,
              std::vector<std::pair<reg_t, abstract_mem_t*>> mems,
@@ -122,7 +123,8 @@ sim_t::sim_t(const cfg_t *cfg, bool halted,
     {clint_factory, {}},
     {plic_factory, {}},
     {ns16550_factory, {}},
-    {virtio_fifo_factory, {}}};
+    {virtio_fifo_factory, {}},
+    {virtio_block_factory, {}}};
   device_factories.insert(device_factories.end(),
                           plugin_device_factories.begin(),
                           plugin_device_factories.end());
