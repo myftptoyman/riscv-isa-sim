@@ -94,6 +94,7 @@ riscv_srcs = \
 	virtio_net.cc \
 	virtio_rng.cc \
 	slirp_net.cc \
+	tap_net.cc \
 	$(riscv_gen_srcs) \
 
 riscv_test_srcs = \
