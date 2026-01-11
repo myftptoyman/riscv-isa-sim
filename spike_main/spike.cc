@@ -104,6 +104,9 @@ static void help(int exit_code = 1)
   fprintf(stderr, "                        Example: --virtio-net-linux=2222:22,8080:80\n");
 #endif
   fprintf(stderr, "  --virtio-rng          Enable VirtIO random number generator\n");
+  fprintf(stderr, "  --virtio-net-tap=<dev>  Enable VirtIO-Net with TAP device\n");
+  fprintf(stderr, "                        Uses layer 2 TAP for direct host network access\n");
+  fprintf(stderr, "                        Example: --virtio-net-tap=tap0\n");
 
   exit(exit_code);
 }
@@ -537,9 +540,27 @@ int main(int argc, char** argv)
   parser.option(0, "virtio-rng", 0, [&](const char UNUSED *s){
     set_virtio_rng_enabled(true);
   });
+  parser.option(0, "virtio-net-tap", 1, [&](const char* s){
+    fprintf(stderr, "spike: parsing --virtio-net-tap option: '%s'\n", s ? s : "(null)");
+    if (s && *s) {
+      set_virtio_net_tap_name(s);
+    } else {
+      set_virtio_net_tap_name("tap0");  // Default TAP device name
+    }
+  });
 
   auto argv1 = parser.parse(argv);
-  std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);
+  std::vector<std::string> htif_args;
+  for (auto p = argv1; p < (const char*const*)argv + argc; p++) {
+    if (*p && **p) {  // Skip null and empty strings
+      std::string arg(*p);
+      // Skip spike options that might leak through
+      if (arg.find("--kernel") == 0 || arg.find("--bootargs") == 0 ||
+          arg.find("--virtio-") == 0 || arg.find("--initrd") == 0)
+        continue;
+      htif_args.push_back(arg);
+    }
+  }
 
   // Allow kernel-only boot (no target program needed when --kernel is specified)
   if (!*argv1 && !kernel)
