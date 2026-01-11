@@ -151,7 +151,7 @@ private:
 
   // Tick counter for polling
   uint64_t tick_count;
-  static const uint64_t POLL_INTERVAL = 10000; // Poll every N ticks
+  static const uint64_t POLL_INTERVAL = 1000; // Poll every N ticks (reduced for SSH responsiveness)
 
   // Burst poll counter - extra polls after FIN to help TCP state machine
   int burst_poll_remaining;

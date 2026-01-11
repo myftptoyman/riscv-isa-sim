@@ -22,7 +22,8 @@ static void write_le32(uint8_t *bytes, uint32_t val) {
 
 virtqueue_t::virtqueue_t(simif_t *sim, uint32_t max_queue_size)
     : sim(sim), max_num(max_queue_size), num(0), desc_addr(0), avail_addr(0),
-      used_addr(0), last_avail_idx(0), ready(false) {}
+      used_addr(0), last_avail_idx(0), last_used_idx(0), old_used_idx(0),
+      ready(false), event_idx_enabled(false) {}
 
 void virtqueue_t::reset() {
   num = 0;
@@ -30,7 +31,10 @@ void virtqueue_t::reset() {
   avail_addr = 0;
   used_addr = 0;
   last_avail_idx = 0;
+  last_used_idx = 0;
+  old_used_idx = 0;
   ready = false;
+  event_idx_enabled = false;
 }
 
 void virtqueue_t::set_num(uint32_t n) {
@@ -70,6 +74,74 @@ bool virtqueue_t::has_pending() {
     return false;
 
   return last_avail_idx != avail_idx;
+}
+
+// Helper function from VirtIO spec: check if we need to notify based on EVENT_IDX
+// Returns true if event_idx is in the range (old_idx, new_idx]
+static inline bool vring_need_event(uint16_t event_idx, uint16_t new_idx,
+                                    uint16_t old_idx) {
+  return (uint16_t)(new_idx - event_idx - 1) < (uint16_t)(new_idx - old_idx);
+}
+
+bool virtqueue_t::should_notify() {
+  static bool debug_virtio = getenv("DEBUG_VIRTIO") != nullptr;
+  static uint64_t check_count = 0;
+  static uint64_t suppress_count = 0;
+  static uint64_t event_idx_suppress_count = 0;
+  check_count++;
+
+  if (!ready || num == 0 || avail_addr == 0)
+    return true; // Default to notifying if not properly configured
+
+  // If EVENT_IDX is negotiated, use used_event threshold instead of flags
+  if (event_idx_enabled) {
+    // Read used_event from end of avail ring: avail_addr + 4 + num * 2
+    // (4 bytes for flags+idx, then num uint16_t ring entries)
+    uint64_t used_event_addr = avail_addr + sizeof(vring_avail) +
+                                num * sizeof(uint16_t);
+    uint16_t used_event;
+    if (!read_guest_mem(used_event_addr, &used_event, sizeof(used_event)))
+      return true; // Can't read - be safe and notify
+
+    // Check if we crossed the used_event threshold
+    bool should = vring_need_event(used_event, last_used_idx, old_used_idx);
+    old_used_idx = last_used_idx;
+
+    if (!should) {
+      event_idx_suppress_count++;
+      if (debug_virtio && event_idx_suppress_count % 1000 == 1) {
+        fprintf(stderr,
+                "virtqueue: EVENT_IDX suppressed, used_event=%u, "
+                "last_used_idx=%u, suppressed=%lu/%lu\n",
+                used_event, last_used_idx, event_idx_suppress_count,
+                check_count);
+      }
+    } else if (debug_virtio && check_count % 10000 == 1) {
+      fprintf(stderr,
+              "virtqueue: EVENT_IDX notify, used_event=%u, last_used_idx=%u\n",
+              used_event, last_used_idx);
+    }
+    return should;
+  }
+
+  // Fall back to VRING_AVAIL_F_NO_INTERRUPT check
+  uint16_t avail_flags;
+  if (!read_guest_mem(avail_addr + offsetof(vring_avail, flags), &avail_flags,
+                      sizeof(avail_flags)))
+    return true; // Can't read - be safe and notify
+
+  // If VRING_AVAIL_F_NO_INTERRUPT is set, driver doesn't want notifications
+  bool should = !(avail_flags & VRING_AVAIL_F_NO_INTERRUPT);
+  if (!should) {
+    suppress_count++;
+    if (debug_virtio && suppress_count % 1000 == 1) {
+      fprintf(stderr,
+              "virtqueue: should_notify=false, avail_flags=0x%x, "
+              "suppressed=%lu/%lu\n",
+              avail_flags, suppress_count, check_count);
+    }
+  }
+  return should;
 }
 
 int virtqueue_t::get_avail_buf(std::vector<vring_desc> &out_descs,
@@ -183,10 +255,11 @@ void virtqueue_t::put_used_buf(uint16_t head, uint32_t len) {
   write_guest_mem(used_addr + sizeof(vring_used) + ring_offset, &elem,
                   sizeof(elem));
 
-  // Update used index
+  // Update used index and track for EVENT_IDX notification logic
   used_idx++;
   write_guest_mem(used_addr + offsetof(vring_used, idx), &used_idx,
                   sizeof(used_idx));
+  last_used_idx = used_idx;
 }
 
 // ============================================================================

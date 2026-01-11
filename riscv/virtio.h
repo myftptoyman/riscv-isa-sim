@@ -63,6 +63,9 @@
 #define VRING_DESC_F_WRITE 0x02
 #define VRING_DESC_F_INDIRECT 0x04
 
+// Available ring flags (set by driver to control notifications)
+#define VRING_AVAIL_F_NO_INTERRUPT 0x01
+
 // Common feature bits
 #define VIRTIO_F_INDIRECT_DESC (1ULL << 28)
 #define VIRTIO_F_EVENT_IDX (1ULL << 29)
@@ -116,6 +119,13 @@ public:
   // Check if there are pending descriptors to process
   bool has_pending();
 
+  // Check if the driver wants to be notified
+  // Implements both VRING_AVAIL_F_NO_INTERRUPT and VIRTIO_F_EVENT_IDX
+  bool should_notify();
+
+  // Set whether VIRTIO_F_EVENT_IDX was negotiated
+  void set_event_idx(bool enabled) { event_idx_enabled = enabled; }
+
   // Get next available descriptor chain
   // Returns head descriptor index, or -1 if none available
   // out_descs: device-readable descriptors (guest writes, device reads)
@@ -140,7 +150,10 @@ private:
   uint64_t avail_addr;
   uint64_t used_addr;
   uint16_t last_avail_idx;
+  uint16_t last_used_idx;      // Track used idx for EVENT_IDX notification logic
+  uint16_t old_used_idx;       // Previous used idx for EVENT_IDX comparison
   bool ready;
+  bool event_idx_enabled;      // True if VIRTIO_F_EVENT_IDX was negotiated
 };
 
 // VirtIO base class implementing MMIO transport

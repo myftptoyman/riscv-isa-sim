@@ -274,13 +274,26 @@ virtio_net_t::~virtio_net_t() {
 }
 
 uint64_t virtio_net_t::get_device_features() const {
-  return VIRTIO_F_VERSION_1 | VIRTIO_F_INDIRECT_DESC | VIRTIO_NET_F_MAC |
-         VIRTIO_NET_F_STATUS | VIRTIO_NET_F_MTU |
+  return VIRTIO_F_VERSION_1 | VIRTIO_F_INDIRECT_DESC | VIRTIO_F_EVENT_IDX |
+         VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | VIRTIO_NET_F_MTU |
          VIRTIO_NET_F_MRG_RXBUF; // Support merged receive buffers
 }
 
 void virtio_net_t::handle_driver_features(uint64_t features) {
   negotiated_features = features;
+
+  // Enable EVENT_IDX on all queues if negotiated
+  bool event_idx = (features & VIRTIO_F_EVENT_IDX) != 0;
+  for (auto &queue : queues) {
+    queue.set_event_idx(event_idx);
+  }
+
+  static bool debug_virtio = getenv("DEBUG_VIRTIO") != nullptr;
+  if (debug_virtio || event_idx) {
+    fprintf(stderr,
+            "virtio-net: features negotiated=0x%lx, EVENT_IDX=%s\n",
+            (unsigned long)features, event_idx ? "enabled" : "disabled");
+  }
 }
 
 void virtio_net_t::handle_queue_notify(uint32_t queue_idx) {
@@ -355,10 +368,12 @@ void virtio_net_t::tick(reg_t rtc_ticks) {
     // Poll immediately if:
     // - SLIRP requested attention via notify callback
     // - We have burst polls remaining (after FIN)
+    // - We have packets waiting in rx_queue (need to deliver them)
     // - Regular interval reached
     bool should_poll = (tick_count >= POLL_INTERVAL) ||
                        slirp_net->has_notify_pending() ||
-                       burst_poll_remaining > 0;
+                       burst_poll_remaining > 0 ||
+                       !rx_queue.empty();
 
     if (should_poll) {
       tick_count = 0;
@@ -371,10 +386,10 @@ void virtio_net_t::tick(reg_t rtc_ticks) {
 
       slirp_net->poll(0); // Non-blocking poll
 
-      // Process RX queue if we have packets
-      if (!rx_queue.empty()) {
-        process_rx_queue();
-      }
+      // Always try to process RX queue after polling SLIRP
+      // This ensures any packets SLIRP just delivered from its internal buffer
+      // get processed immediately, avoiding deadlock when SLIRP was backpressured
+      process_rx_queue();
 
       // Also poll TX queue - kernel may not always notify
       if (QUEUE_TX < queues.size() && queues[QUEUE_TX].is_ready() &&
@@ -500,8 +515,9 @@ void virtio_net_t::process_tx_queue() {
     processed = true;
   }
 
-  // Raise interrupt to notify guest (only if we processed something)
-  if (processed) {
+  // Raise interrupt to notify guest (only if we processed something and driver
+  // hasn't suppressed notifications via VRING_AVAIL_F_NO_INTERRUPT)
+  if (processed && queues[QUEUE_TX].should_notify()) {
     raise_interrupt(VIRTIO_INT_USED_RING);
   }
 }
@@ -523,8 +539,10 @@ void virtio_net_t::process_rx_queue() {
       fprintf(stderr,
               "virtio-net: process_rx_queue: RX queue NOT ready (call #%lu)\n",
               call_count);
-    // Drop the packet to avoid infinite loop in tick()
-    rx_queue.pop();
+    // Drop the packet to avoid infinite loop in tick() - but only if we have one
+    if (!rx_queue.empty()) {
+      rx_queue.pop();
+    }
     return;
   }
 
@@ -613,12 +631,32 @@ void virtio_net_t::process_rx_queue() {
     processed = true;
   }
 
-  // Raise interrupt if we processed any packets
-  if (processed) {
+  // Raise interrupt if we processed any packets and driver hasn't suppressed
+  // notifications via VRING_AVAIL_F_NO_INTERRUPT
+  if (processed && queues[QUEUE_RX].should_notify()) {
     raise_interrupt(VIRTIO_INT_USED_RING);
     if (debug_virtio) {
       fprintf(stderr, "virtio-net: process_rx_queue: raised interrupt\n");
     }
+  }
+
+  // If we still have packets but guest has no buffers, raise interrupt anyway
+  // This helps wake up a stuck guest that might be waiting for notification
+  // Only do this if driver hasn't suppressed notifications
+  if (!rx_queue.empty() && !queues[QUEUE_RX].has_pending() &&
+      queues[QUEUE_RX].should_notify()) {
+    static uint64_t kick_count = 0;
+    static uint64_t last_kick_msg = 0;
+    kick_count++;
+    if (kick_count - last_kick_msg >= 1000) {
+      fprintf(stderr,
+              "virtio-net: kicking guest - %zu packets waiting, no RX buffers "
+              "(kick #%lu)\n",
+              rx_queue.size(), kick_count);
+      last_kick_msg = kick_count;
+    }
+    // Raise interrupt to nudge guest to provide more buffers
+    raise_interrupt(VIRTIO_INT_USED_RING);
   }
 }
 

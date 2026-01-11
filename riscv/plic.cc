@@ -165,6 +165,13 @@ bool plic_t::priority_write(reg_t offset, uint32_t val) {
   if (id > 0 && id < num_ids) {
     val &= ((1 << PLIC_PRIO_BITS) - 1);
     priority[id] = val;
+    // Update pending_priority if it's already pending
+    uint32_t id_word = id / 32;
+    uint32_t id_mask = 1 << (id % 32);
+    if (pending[id_word] & id_mask) {
+      pending_priority[id] = val;
+      global_update();
+    }
   }
 
   return true;
@@ -248,7 +255,7 @@ bool plic_t::context_write(plic_context_t *c, reg_t offset, uint32_t val) {
   };
 
   if (update) {
-    context_update(c);
+    global_update();
   }
 
   return ret;
@@ -271,7 +278,7 @@ void plic_t::set_interrupt_level(uint32_t id, int lvl) {
     level[id_word] &= ~id_mask;
     pending[id_word] &= ~id_mask;
     pending_priority[id] = 0;
-    claimed[id_word] &= ~id_mask;
+    // Don't clear claimed bit here; it should only be cleared by COMPLETE
   }
 
   global_update();

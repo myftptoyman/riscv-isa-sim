@@ -31,16 +31,10 @@ ssize_t slirp_net_t::send_packet_cb(const void *buf, size_t len, void *opaque) {
   static bool debug_slirp = getenv("DEBUG_VIRTIO") != nullptr;
   slirp_net_t *self = static_cast<slirp_net_t *>(opaque);
 
-  // QEMU-style backpressure: check if receiver can accept packets
-  if (self->can_receive_callback && !self->can_receive_callback()) {
-    // Receiver cannot accept - signal SLIRP to buffer/retry
-    if (debug_slirp) {
-      fprintf(
-          stderr,
-          "slirp: send_packet_cb BACKPRESSURE - receiver full, returning 0\n");
-    }
-    return 0; // Return 0 to tell SLIRP we couldn't accept
-  }
+  // Always accept packets - don't use backpressure as SLIRP has issues retrying
+  // buffered packets. The virtio_net layer will queue packets up to its limit
+  // and drop if truly full. This avoids deadlock where SLIRP buffers packets
+  // but never retries sending them.
 
   if (debug_slirp) {
     fprintf(stderr,
@@ -110,12 +104,16 @@ void slirp_net_t::timer_mod_cb(void *timer, int64_t expire_time, void *opaque) {
   slirp_net_t *self = static_cast<slirp_net_t *>(opaque);
   size_t idx = reinterpret_cast<size_t>(timer) - 1;
   if (idx < self->timers.size()) {
-    // SLIRP passes expire_time in milliseconds, convert to nanoseconds
-    self->timers[idx].expire_time = expire_time * 1000000LL;
+    // expire_time is in the same units as clock_get_ns (nanoseconds)
+    // The libslirp.h comment saying "(ms)" is misleading - it's actually
+    // computed as clock_get_ns() + timeout, so it's in nanoseconds
+    self->timers[idx].expire_time = expire_time;
     if (debug_slirp) {
+      int64_t now = clock_get_ns_cb(nullptr);
+      int64_t delta_ms = (expire_time - now) / 1000000LL;
       fprintf(stderr,
-              "slirp: timer_mod idx=%zu expire_time=%lld ms -> %lld ns\n", idx,
-              (long long)expire_time, (long long)self->timers[idx].expire_time);
+              "slirp: timer_mod idx=%zu expire_time=%lld delta=%lld ms\n", idx,
+              (long long)expire_time, (long long)delta_ms);
     }
   }
 }
@@ -263,9 +261,12 @@ void slirp_net_t::poll(int timeout_ms) {
   static bool debug_slirp = getenv("DEBUG_VIRTIO") != nullptr;
   static int poll_count = 0;
   static int events_detected = 0;
+  static int no_event_streak = 0;
 
   if (!slirp)
     return;
+
+  poll_count++;
 
   // Reset poll fds
   poll_fd_count = 0;
@@ -279,6 +280,7 @@ void slirp_net_t::poll(int timeout_ms) {
 
   if (ret > 0) {
     events_detected++;
+    no_event_streak = 0;
     if (debug_slirp) {
       fprintf(stderr,
               "slirp: poll GOT EVENT ret=%d fd_count=%d (total events=%d)\n",
@@ -287,6 +289,24 @@ void slirp_net_t::poll(int timeout_ms) {
         if (poll_fds[i].revents) {
           fprintf(stderr, "  fd[%d]=%d events=%d revents=%d\n", i,
                   poll_fds[i].fd, poll_fds[i].events, poll_fds[i].revents);
+        }
+      }
+    }
+  } else {
+    no_event_streak++;
+    // Log after long periods of no events (possible hang)
+    if (no_event_streak > 0 && no_event_streak % 500000 == 0) {
+      fprintf(stderr,
+              "slirp: WARNING no socket events for %d polls, fd_count=%d, "
+              "slirp_timeout=%u ms\n",
+              no_event_streak, poll_fd_count, slirp_timeout);
+      // Show pending timers
+      int64_t now = clock_get_ns_cb(nullptr);
+      for (size_t i = 0; i < timers.size(); i++) {
+        if (timers[i].active && timers[i].expire_time >= 0) {
+          int64_t ms_until = (timers[i].expire_time - now) / 1000000LL;
+          fprintf(stderr, "  timer[%zu] expires in %lld ms\n", i,
+                  (long long)ms_until);
         }
       }
     }
@@ -311,10 +331,9 @@ void slirp_net_t::poll(int timeout_ms) {
     }
   }
 
-  if (debug_slirp && (++poll_count % 100000 == 0)) {
-
+  if (debug_slirp && (poll_count % 100000 == 0)) {
     fprintf(stderr,
-            "slirp: poll count=%d, fd_count=%zu, timers=%zu, fired=%d\n",
+            "slirp: poll count=%d, fd_count=%d, timers=%zu, fired=%d\n",
             poll_count, poll_fd_count, timers.size(), timers_fired);
   }
 }
