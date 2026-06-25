@@ -1,0 +1,36 @@
+name: Daily Tongue Twisters Email
+
+# 每天寄一封含 20 個繞口令的信給 myftptoyman@gmail.com
+#
+# 需要在 repo 的 Settings > Secrets and variables > Actions 設定兩個 secret:
+#   MAIL_USERNAME : 寄件用的 Gmail 帳號 (例如 yourname@gmail.com)
+#   MAIL_PASSWORD : 該 Gmail 的「應用程式密碼」(App Password,不是登入密碼)
+#                   建立方式:Google 帳號 > 安全性 > 兩步驟驗證 > 應用程式密碼
+#
+# 設定好 secret 後,此工作流會每天自動寄信;也可在 Actions 頁面手動觸發測試。
+
+on:
+  schedule:
+    # UTC 時間;01:07 UTC 約等於台灣時間早上 09:07
+    - cron: "7 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Send tongue twisters email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: Daily Tongue Twisters <${{ secrets.MAIL_USERNAME }}>
+          to: myftptoyman@gmail.com
+          subject: 今日 20 個繞口令
+          body: file://tongue-twisters/tongue_twisters.txt
