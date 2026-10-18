@@ -371,8 +371,10 @@ void virtio_net_t::tick(reg_t rtc_ticks) {
     // - We have burst polls remaining (after FIN)
     // - We have packets waiting in rx_queue (need to deliver them)
     // - Regular interval reached
+    // A pending notify still waits a few ticks: libslirp re-arms it on almost every poll,
+    // which otherwise turns into a poll() syscall on every tick.
     bool should_poll = (tick_count >= POLL_INTERVAL) ||
-                       slirp_net->has_notify_pending() ||
+                       (slirp_net->has_notify_pending() && tick_count >= NOTIFY_MIN_TICKS) ||
                        burst_poll_remaining > 0 ||
                        !rx_queue.empty();
 
