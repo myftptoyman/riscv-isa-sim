@@ -814,8 +814,16 @@ mip_csr_t::mip_csr_t(processor_t* const proc, const reg_t addr):
 }
 
 void mip_csr_t::write_with_mask(const reg_t mask, const reg_t val) noexcept {
-  if (!(state->mvien->read() & MIP_SEIP) && (mask & MIP_SEIP))
-    state->mvip->write_with_mask(MIP_SEIP, val); // mvip.SEIP is an alias of mip.SEIP when mvien.SEIP=0
+  if (!(state->mvien->read() & MIP_SEIP) && (mask & MIP_SEIP)) {
+    // mvip.SEIP is an alias of mip.SEIP when mvien.SEIP=0. A CSRRS/CSRRC on mip reads SEIP as
+    // (external line | software bit), and the priv spec says only the software bit takes part in the
+    // read-modify-write. While the PLIC line is high the incoming SEIP may just be that line, so keep
+    // the software bit; otherwise e.g. OpenSBI's "csrs mip, STIP" latches SEIP forever (IRQ storm).
+    reg_t sw_seip = val & MIP_SEIP;
+    if ((this->val & MIP_SEIP) && sw_seip)
+      sw_seip = state->mvip->basic_csr_t::read() & MIP_SEIP;
+    state->mvip->write_with_mask(MIP_SEIP, sw_seip);
+  }
   mip_or_mie_csr_t::write_with_mask(mask & ~MIP_SEIP, val);
 }
 
