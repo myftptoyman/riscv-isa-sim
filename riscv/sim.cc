@@ -18,6 +18,7 @@
 #include <cassert>
 #include <signal.h>
 #include <unistd.h>
+#include <cinttypes>
 #include <sys/wait.h>
 #include <sys/types.h>
 
@@ -29,6 +30,10 @@ static void handle_signal(int sig)
   ctrlc_pressed = true;
   signal(sig, &handle_signal);
 }
+
+// SIGUSR1: print where hart 0 is (pc, privilege, satp, instret) without stopping the run.
+static volatile sig_atomic_t dump_pc_requested = 0;
+static void handle_dump_pc(int) { dump_pc_requested = 1; }
 
 const size_t sim_t::INTERLEAVE;
 
@@ -67,6 +72,7 @@ sim_t::sim_t(const cfg_t *cfg, bool halted,
     debug_module(this, dm_config)
 {
   signal(SIGINT, &handle_signal);
+  signal(SIGUSR1, &handle_dump_pc);
 
   sout_.rdbuf(std::cerr.rdbuf()); // debug output goes to stderr by default
 
@@ -443,6 +449,23 @@ void sim_t::idle()
 {
   if (done())
     return;
+
+  if (dump_pc_requested) {
+    dump_pc_requested = 0;
+    processor_t *p = get_core(0);
+    state_t *st = p->get_state();
+    fprintf(stderr, "spike-pc: pc=0x%016" PRIx64 " prv=%d satp=0x%016" PRIx64 " minstret=%" PRIu64 "\n",
+            (uint64_t)st->pc, (int)st->prv, (uint64_t)st->satp->read(), (uint64_t)st->minstret->read());
+    fprintf(stderr, "spike-pc: scause=0x%" PRIx64 " sepc=0x%016" PRIx64 " stval=0x%016" PRIx64
+            " stvec=0x%016" PRIx64 " sstatus=0x%" PRIx64 " mcause=0x%" PRIx64 " mepc=0x%016" PRIx64 "\n",
+            (uint64_t)st->scause->read(), (uint64_t)st->sepc->read(), (uint64_t)st->stval->read(),
+            (uint64_t)st->stvec->read(), (uint64_t)st->sstatus->read(), (uint64_t)st->mcause->read(),
+            (uint64_t)st->mepc->read());
+    fprintf(stderr, "spike-pc: mip=0x%" PRIx64 " mie=0x%" PRIx64 " mideleg=0x%" PRIx64 " mvip=0x%" PRIx64 " mvien=0x%" PRIx64 "\n",
+            (uint64_t)st->mip->read(), (uint64_t)st->mie->read(), (uint64_t)st->mideleg->read(),
+            (uint64_t)st->mvip->read(), (uint64_t)st->mvien->read());
+    if (plic) plic->dump_state(stderr);
+  }
 
   if (debug || ctrlc_pressed)
     interactive();

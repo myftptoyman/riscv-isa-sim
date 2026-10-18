@@ -400,3 +400,13 @@ plic_t *plic_parse_from_fdt(const void *fdt, const sim_t *sim, reg_t *base,
 }
 
 REGISTER_BUILTIN_DEVICE(plic, plic_parse_from_fdt, plic_generate_dts)
+
+// Debug aid (spike-pc SIGUSR1 dump): word 0 of the global and per-context PLIC state.
+void plic_t::dump_state(FILE* out) const {
+  fprintf(out, "spike-plic: level=%08x pending=%08x claimed=%08x prio1-5=%u,%u,%u,%u,%u\n",
+          level[0], pending[0], claimed[0], priority[1], priority[2], priority[3], priority[4], priority[5]);
+  for (size_t k = 0; k < contexts.size(); k++)
+    fprintf(out, "spike-plic: ctx%zu %s enable=%08x threshold=%u best=%u\n", k,
+            contexts[k].mmode ? "M" : "S", contexts[k].enable[0], contexts[k].priority_threshold,
+            const_cast<plic_t*>(this)->context_best_pending(&contexts[k]));
+}

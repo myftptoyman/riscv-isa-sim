@@ -1,6 +1,7 @@
 #ifndef _RISCV_DEVICES_H
 #define _RISCV_DEVICES_H
 
+#include <cstdio>
 #include "abstract_device.h"
 #include "abstract_interrupt_controller.h"
 #include "decode.h"
@@ -139,6 +140,7 @@ public:
   void set_interrupt_level(uint32_t id, int lvl) override;
   reg_t size() override { return PLIC_SIZE; }
 
+  void dump_state(FILE* out) const;
 private:
   std::vector<plic_context_t> contexts;
   uint32_t num_ids;
