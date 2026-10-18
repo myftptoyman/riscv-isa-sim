@@ -7,8 +7,10 @@
 #include <errno.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#ifdef __linux__
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#endif
 
 tap_net_t::tap_net_t(const std::string& name)
   : tap_name(name), tap_fd(-1), rx_callback(nullptr)
@@ -23,6 +25,11 @@ tap_net_t::~tap_net_t() {
 }
 
 bool tap_net_t::init() {
+#ifndef __linux__
+  // TAP needs Linux /dev/net/tun; use the SLIRP backend on other hosts.
+  fprintf(stderr, "tap_net: TAP is only supported on Linux, use --virtio-net-linux (SLIRP)\n");
+  return false;
+#else
   // Open TUN/TAP device
   tap_fd = open("/dev/net/tun", O_RDWR);
   if (tap_fd < 0) {
@@ -58,6 +65,7 @@ bool tap_net_t::init() {
   tap_name = ifr.ifr_name;  // Update with actual name
 
   return true;
+#endif
 }
 
 void tap_net_t::send_packet(const uint8_t* data, size_t len) {
